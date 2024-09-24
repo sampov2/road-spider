@@ -32,8 +32,7 @@ function OSM({ coords, distance} : OSMProps) {
 
     return (
         <>
-            <div>Hello</div>
-            {network !== null ? <Spider network={network}/> : <></>}
+            {network !== null ? <Spider network={network}/> : <div>Loading...</div>}
         </>
     )
 }

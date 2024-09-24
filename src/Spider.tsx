@@ -1,16 +1,13 @@
-import { Bodies, Body, Composite, Constraint, Engine, Render, Runner, Vertices, World } from "matter-js";
+import { Bodies, Body, Composite, Composites, Engine, Render, Runner, World } from "matter-js";
 import { Network } from "./types";
 import { createRef, useEffect } from "react";
-import { OverpassNode } from "overpass-ts";
 
 interface SpiderProps {
     network: Network
 }
 
 interface BoundingBox {
-    extent: number[],
-    //width: number,
-    //height: number
+    extent: number[]
 }
 
 interface NodeDict<T> {
@@ -43,23 +40,19 @@ export const boundingBox = (network: Network) : BoundingBox => {
         }
     })
 
-    return {
-        extent,
-        //width: extent[2] - extent[0],
-        //height: extent[3] - extent[1]
-    }
+    return { extent }
 }
 
 function Spider({ network }: SpiderProps) {
     const matterElement = createRef<HTMLDivElement>();
 
     useEffect(() => {
-        if (matterElement.current === null) {
+        if (matterElement.current === null || !network) {
             return;
         }
 
         // create an engine
-        var engine = Engine.create();
+        var engine = Engine.create({ detector: undefined });
 
         // create a renderer
         var render = Render.create({
@@ -77,48 +70,46 @@ function Spider({ network }: SpiderProps) {
             height: 600
         }
 
-
-        const stickySides = 1.2;
-        const stickySideBox = {
-            extent: [-stickySides, -stickySides, stickySides, stickySides],
+        // Define a proportion of the sides to be static
+        const staticSideRel = 1.2;
+        const staticSideBox = {
+            extent: [-staticSideRel, -staticSideRel, staticSideRel, staticSideRel],
         }
 
-        // 1. Create circles from network nodes
-        const nodes = network.nodes
-            .reduce((memo,node) => {
+        const group = Body.nextGroup(true);
+
+        // 1. Create function that creates a circle for each (requested) network nodes
+        const nodes : NodeDict<Body> = {}
+        const getNode = (nodeId: number) : Body => {
+            if (nodes[nodeId] === undefined) {
+                const node = network.nodes.find(n => n.id === nodeId);
+                if (node === undefined) throw Error(`No node with id ${nodeId}`)
+                
                 const vertices = reproject([node.lon, node.lat], bbox, target)
-                const isStatic = !!reproject([node.lon, node.lat], bbox, stickySideBox).find(n => Math.abs(n) >= 1.0)
+                const isStatic = !!reproject([node.lon, node.lat], bbox, staticSideBox).find(n => Math.abs(n) >= 1.0)
 
-                memo[node.id] = Bodies.circle(vertices[0], vertices[1], 2, { isStatic })
-                return memo;
-            }, {} as NodeDict<Body>)
+                nodes[node.id] = Bodies.circle(vertices[0], vertices[1], 2, { 
+                    isStatic,
+                    collisionFilter: { group }
+                })
+            }
+            return nodes[nodeId];
+        }
 
-        // 2. Create constraints from network ways
-        const constraints = network.ways
+        // 2. Create chains from network ways
+        const chains = network.ways
+            .filter((way) => way.nodes.length > 1)
             .map((way) => {
-                const ret : Constraint[] = [];
-                let objectA = nodes[way.nodes[0]]
-                for (let i = 1; i < way.nodes.length; i++) {
-                    let objectB = nodes[way.nodes[i]]
-
-                    ret.push(Constraint.create({
-                        bodyA: objectA,
-                        bodyB: objectB,
-                    }))
-
-                    objectA = objectB;
-                }
-                return ret;
-            }).flat()
+                const comp = Composite.create({
+                    bodies: way.nodes.map(n => getNode(n))
+                })
+                return Composites.chain(comp, 0, 0, 0, 0, { group })
+            })
+            .flat()
+            .filter((_v, i) => i < 20)
 
         // 3. add all of the bodies to the world
-        const objects = Object.keys(nodes).map((key : string) => nodes[key]);
-        
-        const floor = Bodies.rectangle(
-            target.width*.5, target.height*.99, 
-            target.width*.8, 10, { isStatic: true })
-
-        Composite.add(engine.world, [...objects, ...constraints, floor]);
+        Composite.add(engine.world, [...chains]);
         Render.run(render);
 
         var runner = Runner.create();

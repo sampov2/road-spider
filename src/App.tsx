@@ -6,7 +6,7 @@ function App() {
 
   return (
     <>
-      <OSM distance={200} coords={[60.163088,24.936565]}/>
+      <OSM distance={100} coords={[60.163088,24.936565]}/>
     </>
   )
 }
